@@ -10,13 +10,13 @@ import il.ac.bgu.cs.fvm.programgraph.ActionDef;
 import il.ac.bgu.cs.fvm.programgraph.ConditionDef;
 import il.ac.bgu.cs.fvm.programgraph.ProgramGraph;
 import il.ac.bgu.cs.fvm.transitionsystem.AlternatingSequence;
+import il.ac.bgu.cs.fvm.transitionsystem.Transition;
 import il.ac.bgu.cs.fvm.transitionsystem.TransitionSystem;
 import il.ac.bgu.cs.fvm.util.Pair;
 import il.ac.bgu.cs.fvm.verification.VerificationResult;
 import java.io.InputStream;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Implement the methods in this class. You may add additional classes as you
@@ -27,87 +27,159 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <S, A, P> TransitionSystem<S, A, P> createTransitionSystem() {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement createTransitionSystem
+        return new TransitionSystemImpl<S, A, P>();
     }
 
     @Override
     public <S, A, P> boolean isActionDeterministic(TransitionSystem<S, A, P> ts) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isActionDeterministic
+        for(S state : ts.getStates()){
+            for(A action : ts.getActions()){
+                if(post(ts, state, action).size() > 1){
+                    return false;
+                }
+            }
+        }
+
+        return ts.getInitialStates().size() <= 1;
     }
 
     @Override
     public <S, A, P> boolean isAPDeterministic(TransitionSystem<S, A, P> ts) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isAPDeterministic
+        for(S s1 : ts.getStates()){
+            if(post(ts, s1).stream()
+                    .filter(s2 -> ts.getLabel(s1).equals(ts.getLabel(s2)))
+                    .count() > 1){
+                return false;
+            }
+        }
+
+        return ts.getInitialStates().size() <= 1;
     }
 
     @Override
     public <S, A, P> boolean isExecution(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isExecution
+        return isInitialExecutionFragment(ts, e) && isMaximalExecutionFragment(ts, e);
     }
 
     @Override
     public <S, A, P> boolean isExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isExecutionFragment
+        if (!e.isEmpty()) {
+            while (!e.isEmpty()) {
+                S s1 = e.head();
+                A a = e.tail().head();
+                S s2 = e.tail().tail().head();
+
+                if (ts.getTransitions().stream()
+                        .noneMatch(trans ->
+                                trans.getFrom().equals(s1) &&
+                                        trans.getAction().equals(a) &&
+                                        trans.getTo().equals(s2))) {
+                    return false;
+                }
+
+                e = e.tail().tail();
+            }
+        }
+        return true;
     }
 
     @Override
     public <S, A, P> boolean isInitialExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isInitialExecutionFragment
+        return isExecutionFragment(ts, e) && ts.getInitialStates().contains(e.head());
     }
 
     @Override
     public <S, A, P> boolean isMaximalExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isMaximalExecutionFragment
+        return isExecutionFragment(ts, e) && isStateTerminal(ts, e.last());
     }
 
     @Override
     public <S, A> boolean isStateTerminal(TransitionSystem<S, A, ?> ts, S s) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement isStateTerminal
+        return post(ts, s).isEmpty();
     }
 
     @Override
     public <S> Set<S> post(TransitionSystem<S, ?, ?> ts, S s) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement post
+        return ts.getTransitions().stream()
+                .filter(trans -> trans.getFrom().equals(s))
+                .map(Transition::getTo)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S> Set<S> post(TransitionSystem<S, ?, ?> ts, Set<S> c) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement post
+        return c.stream()
+                .map(s -> post(ts, s))
+                .flatMap(Collection::stream)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S, A> Set<S> post(TransitionSystem<S, A, ?> ts, S s, A a) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement post
+        return ts.getTransitions().stream()
+                .filter(trans -> trans.getFrom().equals(s) && trans.getAction().equals(a))
+                .map(Transition::getTo)
+                .collect(Collectors.toSet());
+
     }
 
     @Override
     public <S, A> Set<S> post(TransitionSystem<S, A, ?> ts, Set<S> c, A a) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement post
+        return c.stream()
+                .map(s -> post(ts, s, a))
+                .flatMap(Collection::stream)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S> Set<S> pre(TransitionSystem<S, ?, ?> ts, S s) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement pre
+        return ts.getTransitions().stream()
+                .filter(trans -> trans.getTo().equals(s))
+                .map(Transition::getTo)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S> Set<S> pre(TransitionSystem<S, ?, ?> ts, Set<S> c) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement pre
+        return c.stream()
+                .map(s -> pre(ts, s))
+                .flatMap(Collection::stream)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S, A> Set<S> pre(TransitionSystem<S, A, ?> ts, S s, A a) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement pre
+        return ts.getTransitions().stream()
+                .filter(trans -> trans.getTo().equals(s) && trans.getAction().equals(a))
+                .map(Transition::getTo)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S, A> Set<S> pre(TransitionSystem<S, A, ?> ts, Set<S> c, A a) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement pre
+        return c.stream()
+                .map(s -> pre(ts, s, a))
+                .flatMap(Collection::stream)
+                .collect(Collectors.toSet());
     }
 
     @Override
     public <S, A> Set<S> reach(TransitionSystem<S, A, ?> ts) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement reach
+        List<S> states = new ArrayList<>(ts.getInitialStates());
+        Set<S> reachable = new HashSet<>();
+
+        while(!states.isEmpty()){
+            S state = states.get(0);
+            states.remove(state);
+            if (!reachable.contains(state)) {
+                reachable.add(state);
+                states.addAll(post(ts, reachable).stream()
+                        .filter(s -> !states.contains(s))
+                        .collect(Collectors.toList()));
+            }
+        }
+
+        return reachable;
     }
 
     @Override
