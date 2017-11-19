@@ -5,6 +5,8 @@ import il.ac.bgu.cs.fvm.automata.Automaton;
 import il.ac.bgu.cs.fvm.automata.MultiColorAutomaton;
 import il.ac.bgu.cs.fvm.channelsystem.ChannelSystem;
 import il.ac.bgu.cs.fvm.circuits.Circuit;
+import il.ac.bgu.cs.fvm.exceptions.ActionNotFoundException;
+import il.ac.bgu.cs.fvm.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.fvm.ltl.LTL;
 import il.ac.bgu.cs.fvm.programgraph.ActionDef;
 import il.ac.bgu.cs.fvm.programgraph.ConditionDef;
@@ -27,7 +29,7 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <S, A, P> TransitionSystem<S, A, P> createTransitionSystem() {
-        return new TransitionSystemImpl<S, A, P>();
+        return new TransitionSystemImpl<>();
     }
 
     @Override
@@ -63,22 +65,23 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <S, A, P> boolean isExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        if (!e.isEmpty()) {
-            while (!e.isEmpty()) {
-                S s1 = e.head();
-                A a = e.tail().head();
-                S s2 = e.tail().tail().head();
+        while (e.size() > 1) {
+            S s1 = e.head();
+            A a = e.tail().head();
+            S s2 = e.tail().tail().head();
 
-                if (ts.getTransitions().stream()
-                        .noneMatch(trans ->
-                                trans.getFrom().equals(s1) &&
-                                        trans.getAction().equals(a) &&
-                                        trans.getTo().equals(s2))) {
-                    return false;
-                }
+            verifyStateExists(ts, s1, s2);
+            verifyActionExists(ts, a);
 
-                e = e.tail().tail();
+            if (ts.getTransitions().stream()
+                    .noneMatch(trans ->
+                            trans.getFrom().equals(s1) &&
+                                    trans.getAction().equals(a) &&
+                                    trans.getTo().equals(s2))) {
+                return false;
             }
+
+            e = e.tail().tail();
         }
         return true;
     }
@@ -95,6 +98,7 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <S, A> boolean isStateTerminal(TransitionSystem<S, A, ?> ts, S s) {
+        verifyStateExists(ts, s);
         return post(ts, s).isEmpty();
     }
 
@@ -135,7 +139,7 @@ public class FvmFacadeImpl implements FvmFacade {
     public <S> Set<S> pre(TransitionSystem<S, ?, ?> ts, S s) {
         return ts.getTransitions().stream()
                 .filter(trans -> trans.getTo().equals(s))
-                .map(Transition::getTo)
+                .map(Transition::getFrom)
                 .collect(Collectors.toSet());
     }
 
@@ -151,7 +155,7 @@ public class FvmFacadeImpl implements FvmFacade {
     public <S, A> Set<S> pre(TransitionSystem<S, A, ?> ts, S s, A a) {
         return ts.getTransitions().stream()
                 .filter(trans -> trans.getTo().equals(s) && trans.getAction().equals(a))
-                .map(Transition::getTo)
+                .map(Transition::getFrom)
                 .collect(Collectors.toSet());
     }
 
@@ -252,5 +256,22 @@ public class FvmFacadeImpl implements FvmFacade {
         throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement GNBA2NBA
     }
 
+    @SafeVarargs
+    private final <S> void verifyStateExists(TransitionSystem<S, ?, ?> ts, S... states){
+        for(S s : states){
+            if(!ts.getStates().contains(s)){
+                throw new StateNotFoundException(s);
+            }
+        }
+    }
+
+    @SafeVarargs
+    private final <A> void verifyActionExists(TransitionSystem<?, A, ?> ts, A... actions){
+        for(A a : actions){
+            if(!ts.getActions().contains(a)){
+                throw new ActionNotFoundException(a);
+            }
+        }
+    }
    
 }

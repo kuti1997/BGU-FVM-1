@@ -21,7 +21,7 @@ public class TransitionSystemImpl<S, A, P> implements TransitionSystem<S, A, P> 
     private Set<P> atomicPropositions;
     private Map<S, Set<P>> labels;
 
-    public TransitionSystemImpl(){
+    TransitionSystemImpl(){
         name = "";
         states = new HashSet<>();
         iStates = new HashSet<>();
