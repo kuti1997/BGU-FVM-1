@@ -70,8 +70,8 @@ public class FvmFacadeImpl implements FvmFacade {
             A a = e.tail().head();
             S s2 = e.tail().tail().head();
 
-            verifyStateExists(ts, s1, s2);
-            verifyActionExists(ts, a);
+            requireStates(ts, s1, s2);
+            requireActions(ts, a);
 
             if (ts.getTransitions().stream()
                     .noneMatch(trans ->
@@ -82,6 +82,9 @@ public class FvmFacadeImpl implements FvmFacade {
             }
 
             e = e.tail().tail();
+        }
+        if(e.size() == 1){
+            requireStates(ts, e.head());
         }
         return true;
     }
@@ -98,7 +101,7 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <S, A> boolean isStateTerminal(TransitionSystem<S, A, ?> ts, S s) {
-        verifyStateExists(ts, s);
+        requireStates(ts, s);
         return post(ts, s).isEmpty();
     }
 
@@ -257,7 +260,7 @@ public class FvmFacadeImpl implements FvmFacade {
     }
 
     @SafeVarargs
-    private final <S> void verifyStateExists(TransitionSystem<S, ?, ?> ts, S... states){
+    private final <S> void requireStates(TransitionSystem<S, ?, ?> ts, S... states){
         for(S s : states){
             if(!ts.getStates().contains(s)){
                 throw new StateNotFoundException(s);
@@ -266,7 +269,7 @@ public class FvmFacadeImpl implements FvmFacade {
     }
 
     @SafeVarargs
-    private final <A> void verifyActionExists(TransitionSystem<?, A, ?> ts, A... actions){
+    private final <A> void requireActions(TransitionSystem<?, A, ?> ts, A... actions){
         for(A a : actions){
             if(!ts.getActions().contains(a)){
                 throw new ActionNotFoundException(a);
