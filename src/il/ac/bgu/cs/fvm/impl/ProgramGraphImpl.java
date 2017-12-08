@@ -1,5 +1,6 @@
 package il.ac.bgu.cs.fvm.impl;
 
+import il.ac.bgu.cs.fvm.exceptions.FVMException;
 import il.ac.bgu.cs.fvm.programgraph.PGTransition;
 import il.ac.bgu.cs.fvm.programgraph.ProgramGraph;
 
@@ -18,7 +19,7 @@ public class ProgramGraphImpl<L, A> implements ProgramGraph<L, A> {
     private Set<L> loc0;
     private Set<PGTransition<L, A>> trans;
 
-    public ProgramGraphImpl(){
+    ProgramGraphImpl(){
         name = "Program Graph";
         init = new HashSet<>();
         loc = new HashSet<>();
@@ -34,7 +35,9 @@ public class ProgramGraphImpl<L, A> implements ProgramGraph<L, A> {
 
     @Override
     public void addInitialLocation(L location) {
-        //addLocation(location); FIXME
+        if(!loc.contains(location)){
+            throw new FVMException("Invalid initial state");
+        }
         loc0.add(location);
     }
 
@@ -45,6 +48,9 @@ public class ProgramGraphImpl<L, A> implements ProgramGraph<L, A> {
 
     @Override
     public void addTransition(PGTransition<L, A> t) {
+        if(!loc.contains(t.getFrom()) || !loc.contains(t.getTo())){
+            throw new FVMException("Invalid transition");
+        }
         trans.add(t);
     }
 
@@ -73,11 +79,13 @@ public class ProgramGraphImpl<L, A> implements ProgramGraph<L, A> {
         return trans;
     }
 
-    // FIXME: No tests for removing transition / location - clarify.
     @Override
     public void removeLocation(L l) {
-        loc.remove(l);
+        if(trans.stream().anyMatch(t -> t.getFrom().equals(l) || t.getTo().equals(l))){
+            throw new FVMException("Unable to remove location.");
+        }
         loc0.remove(l);
+        loc.remove(l);
     }
 
     @Override
@@ -108,11 +116,7 @@ public class ProgramGraphImpl<L, A> implements ProgramGraph<L, A> {
 
         ProgramGraphImpl<?, ?> that = (ProgramGraphImpl<?, ?>) o;
 
-        if (!name.equals(that.name)) return false;
-        if (!init.equals(that.init)) return false;
-        if (!loc.equals(that.loc)) return false;
-        if (!loc0.equals(that.loc0)) return false;
-        return trans.equals(that.trans);
+        return name.equals(that.name) && init.equals(that.init) && loc.equals(that.loc) && loc0.equals(that.loc0) && trans.equals(that.trans);
     }
 
     @Override

@@ -6,8 +6,11 @@ import il.ac.bgu.cs.fvm.automata.MultiColorAutomaton;
 import il.ac.bgu.cs.fvm.channelsystem.ChannelSystem;
 import il.ac.bgu.cs.fvm.circuits.Circuit;
 import il.ac.bgu.cs.fvm.exceptions.ActionNotFoundException;
+import il.ac.bgu.cs.fvm.exceptions.FVMException;
 import il.ac.bgu.cs.fvm.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.fvm.ltl.LTL;
+import il.ac.bgu.cs.fvm.nanopromela.NanoPromelaFileReader;
+import il.ac.bgu.cs.fvm.nanopromela.NanoPromelaParser;
 import il.ac.bgu.cs.fvm.programgraph.ActionDef;
 import il.ac.bgu.cs.fvm.programgraph.ConditionDef;
 import il.ac.bgu.cs.fvm.programgraph.PGTransition;
@@ -20,6 +23,7 @@ import il.ac.bgu.cs.fvm.verification.VerificationResult;
 import java.io.InputStream;
 import java.util.*;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -389,12 +393,102 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <L, A> TransitionSystem<Pair<L, Map<String, Object>>, A, String> transitionSystemFromProgramGraph(ProgramGraph<L, A> pg, Set<ActionDef> actionDefs, Set<ConditionDef> conditionDefs) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement transitionSystemFromProgramGraph
+        TransitionSystem<Pair<L, Map<String, Object>>, A, String> ts = createTransitionSystem();
+
+        // Initializations evaluation
+        Set<Map<String, Object>> initialEvals = pg.getInitalizations().stream().map(init -> {
+            Map<String, Object> initEval = new HashMap<>();
+            for (String s : init) {
+                Set<ActionDef> matches = actionDefs.stream().filter(ad -> ad.isMatchingAction(s)).collect(Collectors.toSet());
+                for (ActionDef ad : matches) {
+                    initEval = ad.effect(initEval, s);
+                }
+            }
+            return initEval;
+        }).collect(Collectors.toSet());
+
+        // Initial states
+        pg.getInitialLocations().forEach(loc ->
+                initialEvals.forEach(eval -> {
+                    ts.addState(Pair.pair(loc, eval));
+                    ts.addInitialState(Pair.pair(loc, eval));
+                }));
+
+        // States, Actions & Transitions
+        List<Pair<L, Map<String, Object>>> states = new ArrayList<>(ts.getInitialStates());
+        while(!states.isEmpty()){
+            Pair<L, Map<String, Object>> fromState = states.get(0);
+            states.remove(0);
+
+            pg.getTransitions().forEach(t ->{
+                if(t.getFrom().equals(fromState.getFirst()) && conditionDefs.stream().anyMatch(c -> c.evaluate(fromState.getSecond(), t.getCondition()))){
+                    Set<ActionDef> matches = actionDefs.stream()
+                            .filter(ad -> ad.isMatchingAction(t.getAction()))
+                            .collect(Collectors.toSet());
+                    Consumer<Map<String, Object>> addToTransitionSystem = evaluation -> {
+                        Pair<L, Map<String, Object>> toState = Pair.pair(t.getTo(), evaluation);
+                        if(!ts.getStates().contains(toState)){
+                            ts.addState(toState);
+                            states.add(toState);
+                        }
+
+                        ts.addAction(t.getAction());
+                        ts.addTransition(new Transition<>(fromState, t.getAction(), toState));
+                    };
+                    if(matches.isEmpty()){
+                        addToTransitionSystem.accept(fromState.getSecond());
+                    } else{
+                        matches.forEach(ad -> addToTransitionSystem.accept(ad.effect(fromState.second, t.getAction())));
+                    }
+                }
+            });
+        }
+
+        // Atomic Propositions & labels
+        ts.getStates().forEach(s ->{
+            ts.addAtomicProposition(s.getFirst().toString());
+            ts.addToLabel(s, s.first.toString());
+            s.getSecond().forEach((key, value) -> {
+                String expr = key + " = " + value;
+                ts.addAtomicProposition(expr);
+                ts.addToLabel(s, expr);
+            });
+        });
+
+        return ts;
+    }
+
+    public Set<Set<Object>> cartesianProduct(Set<?>... sets) {
+        if (sets.length < 2)
+            throw new IllegalArgumentException(
+                    "Can't have a product of fewer than two sets (got " +
+                            sets.length + ")");
+
+        return _cartesianProduct(0, sets);
+    }
+
+    private Set<Set<Object>> _cartesianProduct(int index, Set<?>... sets) {
+        Set<Set<Object>> ret = new HashSet<>();
+        if (index == sets.length) {
+            ret.add(new HashSet<>());
+        } else {
+            for (Object obj : sets[index]) {
+                for (Set<Object> set : _cartesianProduct(index+1, sets)) {
+                    set.add(obj);
+                    ret.add(set);
+                }
+            }
+        }
+        return ret;
     }
 
     @Override
     public <L, A> TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> transitionSystemFromChannelSystem(ChannelSystem<L, A> cs) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement transitionSystemFromChannelSystem
+        TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> ts = createTransitionSystem();
+        List<ProgramGraph<L, A>> pgs = cs.getProgramGraphs();
+
+
+        return ts;
     }
 
     @Override
@@ -404,17 +498,25 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public ProgramGraph<String, String> programGraphFromNanoPromela(String filename) throws Exception {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement programGraphFromNanoPromela
+        return programGraphFromNanoPromela(NanoPromelaFileReader.pareseNanoPromelaFile(filename));
     }
 
     @Override
     public ProgramGraph<String, String> programGraphFromNanoPromelaString(String nanopromela) throws Exception {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement programGraphFromNanoPromelaString
+        return programGraphFromNanoPromela(NanoPromelaFileReader.pareseNanoPromelaString(nanopromela));
     }
 
     @Override
     public ProgramGraph<String, String> programGraphFromNanoPromela(InputStream inputStream) throws Exception {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement programGraphFromNanoPromela
+        return programGraphFromNanoPromela(NanoPromelaFileReader.parseNanoPromelaStream(inputStream));
+    }
+
+    private ProgramGraph<String, String> programGraphFromNanoPromela(NanoPromelaParser.StmtContext sc){
+        ProgramGraph<String, String> pg = createProgramGraph();
+        pg.addLocation("");
+        pg.addInitialLocation(sc.getText());
+
+        return pg;
     }
 
     @Override
