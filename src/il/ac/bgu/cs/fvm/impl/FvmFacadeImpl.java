@@ -10,6 +10,7 @@ import il.ac.bgu.cs.fvm.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.fvm.ltl.LTL;
 import il.ac.bgu.cs.fvm.programgraph.ActionDef;
 import il.ac.bgu.cs.fvm.programgraph.ConditionDef;
+import il.ac.bgu.cs.fvm.programgraph.PGTransition;
 import il.ac.bgu.cs.fvm.programgraph.ProgramGraph;
 import il.ac.bgu.cs.fvm.transitionsystem.AlternatingSequence;
 import il.ac.bgu.cs.fvm.transitionsystem.Transition;
@@ -18,7 +19,9 @@ import il.ac.bgu.cs.fvm.util.Pair;
 import il.ac.bgu.cs.fvm.verification.VerificationResult;
 import java.io.InputStream;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Implement the methods in this class. You may add additional classes as you
@@ -189,29 +192,199 @@ public class FvmFacadeImpl implements FvmFacade {
         return reachable;
     }
 
+    private <S1, S2> Set<Pair<S1, S2>> interleaveStates(Set<S1> states1, Set<S2> states2){
+        Set<Pair<S1, S2>> result = new HashSet<>();
+        states1.forEach(s1 ->
+                states2.forEach(s2 ->
+                        result.add(Pair.pair(s1, s2))));
+        return result;
+    }
+
+    private <T> Set<T> union(Collection<T> t1, Collection<T> t2){
+        return Stream.concat(t1.stream(), t2.stream()).collect(Collectors.toSet());
+    }
+
+
     @Override
     public <S1, S2, A, P> TransitionSystem<Pair<S1, S2>, A, P> interleave(TransitionSystem<S1, A, P> ts1, TransitionSystem<S2, A, P> ts2) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement interleave
+        return interleave(ts1, ts2, Collections.emptySet());
     }
 
     @Override
     public <S1, S2, A, P> TransitionSystem<Pair<S1, S2>, A, P> interleave(TransitionSystem<S1, A, P> ts1, TransitionSystem<S2, A, P> ts2, Set<A> handShakingActions) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement interleave
+        TransitionSystem<Pair<S1, S2>, A, P> interleaved = createTransitionSystem();
+        // States
+        interleaved.addAllStates(interleaveStates(ts1.getStates(), ts2.getStates()));
+        // Initial states
+        interleaveStates(ts1.getInitialStates(), ts2.getInitialStates()).forEach(interleaved::addInitialState);
+        // Actions
+        interleaved.addAllActions(union(ts1.getActions(), ts2.getActions()));
+        // Atomic Propositions
+        interleaved.addAllAtomicPropositions(union(ts1.getAtomicPropositions(), ts2.getAtomicPropositions()));
+        // Transitions
+        ts1.getTransitions().stream()
+                .filter(t -> !handShakingActions.contains(t.getAction()))
+                .forEach(t1 ->
+                        interleaved.getStates().forEach(p1 ->
+                                interleaved.getStates().forEach(p2 -> {
+                                    if (t1.getFrom().equals(p1.getFirst()) && t1.getTo().equals(p2.getFirst()) && p1.getSecond().equals(p2.getSecond())) {
+                                        interleaved.addTransition(new Transition<>(p1, t1.getAction(), p2));
+                                    }
+                                })));
+        ts2.getTransitions().stream()
+                .filter(t -> !handShakingActions.contains(t.getAction()))
+                .forEach(t2 ->
+                        interleaved.getStates().forEach(p1 ->
+                                interleaved.getStates().forEach(p2 -> {
+                                    if (t2.getFrom().equals(p1.getSecond()) && t2.getTo().equals(p2.getSecond()) && p1.getFirst().equals(p2.getFirst())) {
+                                        interleaved.addTransition(new Transition<>(p1, t2.getAction(), p2));
+                                    }
+                                })));
+        handShakingActions.forEach(a ->
+                ts1.getTransitions().forEach(t1 ->
+                        ts2.getTransitions().forEach(t2 -> {
+                            if (t1.getAction().equals(a) && t2.getAction().equals(a)) {
+                                interleaved.addTransition(new Transition<>(Pair.pair(t1.getFrom(), t2.getFrom()), a, Pair.pair(t1.getTo(), t2.getTo())));
+                            }
+                        })));
+
+        Set<Pair<S1, S2>> reachableStates = reach(interleaved);
+        Set<Pair<S1, S2>> unreachableStates = interleaved.getStates().stream()
+                .filter(p -> !reachableStates.contains(p))
+                .collect(Collectors.toSet());
+        Set<Transition<Pair<S1, S2>, A>> unreachableTransitions = interleaved.getTransitions().stream()
+                .filter(t ->
+                        unreachableStates.stream().anyMatch(p ->
+                                t.getFrom().equals(p) || t.getTo().equals(p)))
+                .collect(Collectors.toSet());
+
+        unreachableTransitions.forEach(interleaved::removeTransition);
+        unreachableStates.forEach(interleaved::removeState);
+
+        // Labels
+        interleaved.getStates().forEach(p ->
+                Stream.concat(ts1.getLabel(p.getFirst()).stream(), ts2.getLabel(p.getSecond()).stream())
+                        .forEach(l -> interleaved.addToLabel(p, l)));
+
+        return interleaved;
     }
 
     @Override
     public <L, A> ProgramGraph<L, A> createProgramGraph() {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement createProgramGraph
+        return new ProgramGraphImpl<>();
     }
 
     @Override
     public <L1, L2, A> ProgramGraph<Pair<L1, L2>, A> interleave(ProgramGraph<L1, A> pg1, ProgramGraph<L2, A> pg2) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement interleave
+        ProgramGraph<Pair<L1, L2>, A> interleaved = createProgramGraph();
+
+        pg1.getInitalizations().forEach(i1 ->
+                pg2.getInitalizations().forEach(i2 ->
+                        interleaved.addInitalization(Stream.concat(i1.stream(), i2.stream()).collect(Collectors.toList()))));
+        interleaveStates(pg1.getLocations(), pg2.getLocations()).forEach(interleaved::addLocation);
+        interleaveStates(pg1.getInitialLocations(), pg2.getInitialLocations()).forEach(interleaved::addInitialLocation);
+
+        pg1.getTransitions().forEach(t1 ->
+                interleaved.getLocations().forEach(p1 ->
+                        interleaved.getLocations().forEach(p2 -> {
+                            if (t1.getFrom().equals(p1.getFirst()) && t1.getTo().equals(p2.getFirst()) && p1.getSecond().equals(p2.getSecond())) {
+                                interleaved.addTransition(new PGTransition<>(p1, t1.getCondition(), t1.getAction(), p2));
+                            }
+                        })));
+        pg2.getTransitions().forEach(t2 ->
+                interleaved.getLocations().forEach(p1 ->
+                        interleaved.getLocations().forEach(p2 -> {
+                            if (t2.getFrom().equals(p1.getSecond()) && t2.getTo().equals(p2.getSecond()) && p1.getFirst().equals(p2.getFirst())) {
+                                interleaved.addTransition(new PGTransition<>(p1, t2.getCondition(), t2.getAction(), p2));
+                            }
+                        })));
+
+        return interleaved;
+    }
+
+    private Boolean[] toBinary(int number, int length){
+        StringBuilder binaryStringBuilder = new StringBuilder(Integer.toBinaryString(number));
+        for(int i=0; i<(length - binaryStringBuilder.length()); i++){
+            binaryStringBuilder.insert(0, "0");
+        }
+
+        String binaryString = binaryStringBuilder.toString();
+        Boolean[] result = new Boolean[length];
+
+        for(int i=0; i<length; i++){
+            result[i] = binaryString.charAt(i) == '1';
+        }
+
+        return result;
     }
 
     @Override
     public TransitionSystem<Pair<Map<String, Boolean>, Map<String, Boolean>>, Map<String, Boolean>, Object> transitionSystemFromCircuit(Circuit c) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement transitionSystemFromCircuit
+        TransitionSystem<Pair<Map<String, Boolean>, Map<String, Boolean>>, Map<String, Boolean>, Object> ts = createTransitionSystem();
+
+        List<String> inputPortNames = new ArrayList<>(c.getInputPortNames());
+        List<String> registerNames = new ArrayList<>(c.getRegisterNames());
+        List<String> outputPortNames = new ArrayList<>(c.getOutputPortNames());
+
+        int inputLength = c.getInputPortNames().size();
+        int registerLength = c.getRegisterNames().size();
+
+        double inputCombinations = Math.pow(2, c.getInputPortNames().size());
+        double registerCombinations = Math.pow(2, c.getRegisterNames().size());
+
+        // Handle states, init-states & actions
+        for (int i = 0; i < inputCombinations; i++) {
+            Boolean[] binaryInput = toBinary(i, inputLength);
+            Map<String, Boolean> inputState = new HashMap<>();
+            for (int varIndex = 0; varIndex < binaryInput.length; varIndex++) {
+                inputState.put(inputPortNames.get(varIndex), binaryInput[varIndex]);
+            }
+
+            for (int j = 0; j < registerCombinations; j++) {
+                Boolean[] binaryRegisters = toBinary(j, registerLength);
+                Map<String, Boolean> registerState = new HashMap<>();
+                for (int varIndex = 0; varIndex < binaryInput.length; varIndex++) {
+                    registerState.put(registerNames.get(varIndex), binaryRegisters[varIndex]);
+                }
+
+                ts.addState(Pair.pair(inputState, registerState));
+                if (j == 0) {
+                    ts.addInitialState(Pair.pair(inputState, registerState));
+                }
+            }
+
+            ts.addAction(inputState);
+        }
+
+        union(inputPortNames, union(registerNames, outputPortNames)).forEach(ts::addAtomicProposition);
+
+        ts.getStates().forEach(s1 ->
+                ts.getStates().forEach(s2 -> {
+                    if (c.updateRegisters(s1.getFirst(), s1.getSecond()).equals(s2.getSecond())) {
+                        ts.addTransition(new Transition<>(s1, s2.getFirst(), s2));
+                    }
+                }));
+
+        Set<Pair<Map<String, Boolean>, Map<String, Boolean>>> reachableStates = reach(ts);
+        Set<Pair<Map<String, Boolean>, Map<String, Boolean>>> unreachableStates = ts.getStates().stream()
+                .filter(s -> !reachableStates.contains(s))
+                .collect(Collectors.toSet());
+        Set<Transition<Pair<Map<String, Boolean>, Map<String, Boolean>>, Map<String, Boolean>>> unreachableTransitions = ts.getTransitions().stream()
+                .filter(t -> unreachableStates.contains(t.getFrom()) || unreachableStates.contains(t.getTo()))
+                .collect(Collectors.toSet());
+
+        unreachableTransitions.forEach(ts::removeTransition);
+        unreachableStates.forEach(ts::removeState);
+
+        ts.getStates().forEach(s ->
+                union(s.getFirst().entrySet(),
+                        union(s.getSecond().entrySet(),
+                                c.computeOutputs(s.getFirst(), s.getSecond()).entrySet()))
+                        .stream()
+                        .filter(Map.Entry::getValue)
+                        .map(Map.Entry::getKey)
+                        .forEach(name -> ts.addToLabel(s, name)));
+        return ts;
     }
 
     @Override
