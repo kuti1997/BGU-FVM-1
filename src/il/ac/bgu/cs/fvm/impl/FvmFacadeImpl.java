@@ -6,15 +6,11 @@ import il.ac.bgu.cs.fvm.automata.MultiColorAutomaton;
 import il.ac.bgu.cs.fvm.channelsystem.ChannelSystem;
 import il.ac.bgu.cs.fvm.circuits.Circuit;
 import il.ac.bgu.cs.fvm.exceptions.ActionNotFoundException;
-import il.ac.bgu.cs.fvm.exceptions.FVMException;
 import il.ac.bgu.cs.fvm.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.fvm.ltl.LTL;
 import il.ac.bgu.cs.fvm.nanopromela.NanoPromelaFileReader;
 import il.ac.bgu.cs.fvm.nanopromela.NanoPromelaParser;
-import il.ac.bgu.cs.fvm.programgraph.ActionDef;
-import il.ac.bgu.cs.fvm.programgraph.ConditionDef;
-import il.ac.bgu.cs.fvm.programgraph.PGTransition;
-import il.ac.bgu.cs.fvm.programgraph.ProgramGraph;
+import il.ac.bgu.cs.fvm.programgraph.*;
 import il.ac.bgu.cs.fvm.transitionsystem.AlternatingSequence;
 import il.ac.bgu.cs.fvm.transitionsystem.Transition;
 import il.ac.bgu.cs.fvm.transitionsystem.TransitionSystem;
@@ -22,7 +18,6 @@ import il.ac.bgu.cs.fvm.util.Pair;
 import il.ac.bgu.cs.fvm.verification.VerificationResult;
 import java.io.InputStream;
 import java.util.*;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -458,35 +453,93 @@ public class FvmFacadeImpl implements FvmFacade {
         return ts;
     }
 
-    public Set<Set<Object>> cartesianProduct(Set<?>... sets) {
-        if (sets.length < 2)
-            throw new IllegalArgumentException(
-                    "Can't have a product of fewer than two sets (got " +
-                            sets.length + ")");
-
-        return _cartesianProduct(0, sets);
-    }
-
-    private Set<Set<Object>> _cartesianProduct(int index, Set<?>... sets) {
-        Set<Set<Object>> ret = new HashSet<>();
-        if (index == sets.length) {
-            ret.add(new HashSet<>());
-        } else {
-            for (Object obj : sets[index]) {
-                for (Set<Object> set : _cartesianProduct(index+1, sets)) {
-                    set.add(obj);
-                    ret.add(set);
-                }
+    private <L, A> void addInitializations(ChannelSystem<L, A> cs, List<List<String>> initializations, List<String> init, int pg){
+        if(pg == cs.getProgramGraphs().size()){
+            initializations.add(init);
+        } else{
+            if(cs.getProgramGraphs().get(pg).getInitalizations().isEmpty()){
+                addInitializations(cs, initializations, init, pg+1);
+            } else{
+                cs.getProgramGraphs().get(pg).getInitalizations().forEach(i ->{
+                    List<String> acc = new ArrayList<>(init);
+                    acc.addAll(i);
+                    addInitializations(cs, initializations, acc, pg+1);
+                });
             }
         }
-        return ret;
+    }
+
+    private <L, A> void addInitialStates(ChannelSystem<L, A> cs, TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> ts,
+                                         Set<Map<String, Object>> evaluations, List<L> initialLocations){
+        if(cs.getProgramGraphs().size() == initialLocations.size())
+        {
+            Consumer<Map<String, Object>> addState = evaluation ->{
+                Pair<List<L>, Map<String, Object>> newState = Pair.pair(initialLocations, evaluation);
+                ts.addState(newState);
+                ts.addInitialState(newState);
+;            };
+
+            if(evaluations.isEmpty())
+            {
+                addState.accept(new HashMap<>());
+            } else{
+                evaluations.forEach(addState);
+            }
+        }
+        else
+        {
+            for(L loc : cs.getProgramGraphs().get(initialLocations.size()).getInitialLocations())
+            {
+                initialLocations.add(loc);
+                addInitialStates(cs, ts, evaluations, initialLocations);
+                initialLocations.remove(loc);
+            }
+        }
     }
 
     @Override
     public <L, A> TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> transitionSystemFromChannelSystem(ChannelSystem<L, A> cs) {
         TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> ts = createTransitionSystem();
-        List<ProgramGraph<L, A>> pgs = cs.getProgramGraphs();
 
+        Set<ActionDef> effect = new HashSet<>();
+        effect.add(new ParserBasedActDef());
+
+        List<List<String>> initializations = new ArrayList<>();
+        addInitializations(cs, initializations, new ArrayList<>(), 0);
+
+        Set<Map<String, Object>> evaluations = new HashSet<>();
+        Map<String, Object> initMap;
+        for(List<String> initList : initializations){
+            initMap = new HashMap<>();
+            for(String init : initList){
+                initMap = ActionDef.effect(effect, initMap, init);
+            }
+            evaluations.add(initMap);
+        }
+
+
+        List<L> initialLocations = new ArrayList<>();
+        addInitialStates(cs, ts, evaluations, initialLocations);
+
+
+        Set<ConditionDef> cond = new HashSet<>();
+        cond.add(new ParserBasedCondDef());
+        // Create the TransitionSystem
+
+        // AP & Labels
+        ts.getStates().forEach(s ->{
+                s.first.forEach(loc -> {
+                    ts.addAtomicProposition(loc.toString());
+                    ts.addToLabel(s, loc.toString());
+                });
+                s.getSecond().forEach((k, v) ->{
+                    String ap = k + " = " + v;
+                    ts.addAtomicProposition(ap);
+                    ts.addToLabel(s, ap);
+                });
+
+
+        });
 
         return ts;
     }
