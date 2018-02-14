@@ -8,7 +8,7 @@ import il.ac.bgu.cs.fvm.channelsystem.ParserBasedInterleavingActDef;
 import il.ac.bgu.cs.fvm.circuits.Circuit;
 import il.ac.bgu.cs.fvm.exceptions.ActionNotFoundException;
 import il.ac.bgu.cs.fvm.exceptions.StateNotFoundException;
-import il.ac.bgu.cs.fvm.ltl.LTL;
+import il.ac.bgu.cs.fvm.ltl.*;
 import il.ac.bgu.cs.fvm.nanopromela.NanoPromelaFileReader;
 import il.ac.bgu.cs.fvm.nanopromela.NanoPromelaParser;
 import il.ac.bgu.cs.fvm.programgraph.*;
@@ -497,6 +497,7 @@ public class FvmFacadeImpl implements FvmFacade {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public <L, A> TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> transitionSystemFromChannelSystem(ChannelSystem<L, A> cs) {
         TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> ts = createTransitionSystem();
@@ -824,12 +825,152 @@ public class FvmFacadeImpl implements FvmFacade {
 
     @Override
     public <L> Automaton<?, L> LTL2NBA(LTL<L> ltl) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement LTL2NBA
+        MultiColorAutomaton<Set<LTL<L>>, L> aut = new MultiColorAutomaton<>();
+        Set<LTL<L>> exprs = new HashSet<>();
+        Queue<LTL<L>> toCheck = new ArrayDeque<>();
+        toCheck.add(ltl);
+
+        while (!toCheck.isEmpty()) {
+            LTL<L> subExpr1 = toCheck.poll();
+            if (!exprs.contains(subExpr1)){
+                if (subExpr1 instanceof Not) {
+                    toCheck.add(((Not<L>) subExpr1).getInner());
+                } else{
+                    exprs.add(subExpr1);
+                    if (subExpr1 instanceof Next) {
+                        toCheck.add(((Next<L>) subExpr1).getInner());
+                    } else if (subExpr1 instanceof And || subExpr1 instanceof Until) {
+                        toCheck.add((subExpr1 instanceof And) ? ((And<L>) subExpr1).getLeft() : ((Until<L>) subExpr1).getLeft());
+                        toCheck.add((subExpr1 instanceof And) ? ((And<L>) subExpr1).getRight() : ((Until<L>) subExpr1).getRight());
+                    }
+                }
+            }
+
+        }
+
+        Set<Until<L>> untilExprs = exprs.stream().filter(exp -> exp instanceof Until).map(exp -> (Until<L>) exp).collect(Collectors.toSet());
+        Set<Next<L>> nextExprs = exprs.stream().filter(exp -> exp instanceof Next).map(exp -> (Next<L>) exp).collect(Collectors.toSet());
+
+        int size = (int) Math.pow(2, exprs.size());
+
+        List<Set<LTL<L>>> subExprs1 = new ArrayList<>(size);
+        for (int i = 0; i < size; i++)
+            subExprs1.add(new HashSet<>(exprs.size()));
+
+        {
+            int i, j, count;
+            Iterator<LTL<L>> it = exprs.iterator();
+            LTL<L> item;
+            boolean flag;
+            for (i = 1; it.hasNext(); i *= 2) {
+                for (j = 0, count = 0, flag = true, item = it.next(); j < size; j++) {
+                    subExprs1.get(j).add(flag ? item : LTL.not(item));
+                    count = (count + 1) % i;
+                    flag = (count == 0) != flag;
+                }
+            }
+        }
+
+        List<Set<LTL<L>>> states = new ArrayList<>();
+        for (Set<LTL<L>> subExpr : subExprs1) {
+            Iterator<LTL<L>> it = subExpr.iterator();
+            boolean flag = !subExpr.contains(LTL.not(new TRUE<L>()));
+            while (flag && it.hasNext()) {
+                LTL<L> item = it.next();
+                if (item instanceof And)
+                    flag = subExpr.contains(((And<L>) item).getLeft()) && subExpr.contains(((And<L>) item).getRight());
+                else if (item instanceof Until)
+                    flag = subExpr.contains(((Until<L>) item).getRight())
+                            || subExpr.contains(((Until<L>) item).getLeft());
+                else if (item instanceof Not) {
+                    LTL<L> innerItem = ((Not<L>) item).getInner();
+                    if (innerItem instanceof And)
+                        flag = !(subExpr.contains(((And<L>) innerItem).getLeft())
+                                && subExpr.contains(((And<L>) innerItem).getRight()));
+                    else if (innerItem instanceof Until)
+                        flag = !(subExpr.contains(((Until<L>) innerItem).getRight()));
+                }
+            }
+
+            if (flag){
+                states.add(subExpr);
+            }
+        }
+
+        states.forEach(s1 ->{
+            aut.addState(s1);
+            if (s1.contains(ltl)) {
+                aut.setInitial(s1);
+            }
+        });
+
+        int color = 1;
+        for (Until<L> ue : untilExprs) {
+            for (Set<LTL<L>> s1 : states) {
+                if (!s1.contains(ue) || s1.contains(ue.getRight())) {
+                    aut.setAccepting(s1, color);
+                }
+            }
+            color++;
+        }
+
+        states.forEach(src -> {
+            Set<L> act = src.stream().filter(exp -> exp instanceof AP).map(exp -> ((AP<L>) exp).getName()).collect(Collectors.toSet());
+            src.forEach(exp -> states.forEach(dst -> {
+                if (nextExprs.stream().noneMatch(e -> src.contains(e) != dst.contains(e.getInner())) &&
+                        untilExprs.stream().noneMatch(e -> src.contains(e) != (src.contains(e.getRight()) || (src.contains(e.getLeft()) && dst.contains(e)))))
+                    aut.addTransition(src, act, dst);
+            }));
+        });
+        if (aut.getColors().isEmpty()) {
+            states.forEach(s -> aut.setAccepting(s, 1));
+        }
+        return GNBA2NBA(aut);
     }
 
     @Override
     public <L> Automaton<?, L> GNBA2NBA(MultiColorAutomaton<?, L> mulAut) {
-        throw new UnsupportedOperationException("Not supported yet."); // TODO: Implement GNBA2NBA
+        Automaton<Pair<?, Integer>, L> nba = new Automaton<>();
+        Set<Pair<?, Integer>> visited = new HashSet<>();
+        Queue<Pair<?, Integer>> queue = new ArrayDeque<>();
+
+        List<Integer> colors = new LinkedList<>(mulAut.getColors());
+        if(colors.isEmpty()){
+            colors.add(1);
+        }
+        Collections.sort(colors);
+
+        Integer firstColor = colors.get(0);
+
+        mulAut.getInitialStates().forEach(is ->{
+            Pair<?, Integer> s = new Pair<>(is, firstColor);
+            nba.addState(s);
+            nba.setInitial(s);
+        });
+
+        visited.addAll(nba.getInitialStates());
+        queue.addAll(nba.getInitialStates());
+        while (!queue.isEmpty()) {
+            Pair<?, Integer> src = queue.poll();
+            Map<Set<L>, ? extends Set<?>> transition = mulAut.getTransitions().get(src.getFirst());
+
+            if (transition != null) {
+                int color = mulAut.getAcceptingStates(src.getSecond()).contains(src.getFirst()) ?
+                        colors.get((colors.indexOf(src.getSecond()) + 1) % colors.size()) :
+                        src.getSecond();
+                transition.keySet().forEach(act -> transition.get(act).forEach(dst ->{
+                    Pair<?, Integer> pair = Pair.pair(dst, color);
+                    nba.addTransition(src, act, pair);
+                    if (!visited.contains(pair)){
+                        nba.addState(pair);
+                        queue.add(pair);
+                        visited.add(pair);
+                    }
+                }));
+            }
+        }
+        mulAut.getAcceptingStates(firstColor).forEach(s -> nba.setAccepting(new Pair<>(s, firstColor)));
+        return nba;
     }
 
     @SafeVarargs
